@@ -148,9 +148,9 @@ This file acts as an archive and helps prevent duplicate postings.
 Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/amazon-pinterest-automation.git
+git clone https://github.com/Revanth1310/amazon_to_pintrest.git
 
-cd amazon-pinterest-automation
+cd amazon_to_pintrest
 ```
 
 Create a virtual environment:
@@ -190,6 +190,7 @@ Run:
 ```bash
 python amazon.py
 ```
+enter product names
 
 The scraper will:
 
@@ -210,7 +211,7 @@ Ensure your Chrome profile is already logged into Pinterest.
 Configure your profile path:
 
 ```python
-PROFILE_PATH = r"D:\AutomationProfile"
+PROFILE_PATH = '<Crome Driver Path>'
 ```
 
 Run:
@@ -218,6 +219,7 @@ Run:
 ```bash
 python pins.py
 ```
+enter no of pins to post
 
 The bot will:
 
