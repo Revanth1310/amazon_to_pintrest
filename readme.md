@@ -211,7 +211,7 @@ Ensure your Chrome profile is already logged into Pinterest.
 Configure your profile path:
 
 ```python
-PROFILE_PATH = '<Crome Driver Path>'
+PROFILE_PATH = "<Crome Driver Path>"
 ```
 
 Run:
