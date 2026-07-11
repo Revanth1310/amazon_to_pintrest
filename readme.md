@@ -1,92 +1,116 @@
 # 📌 Amazon to Pinterest Automation
 
-Automate your affiliate marketing workflow by scraping products from Amazon and publishing them to Pinterest automatically.
+Automate your affiliate marketing workflow by scraping Amazon products and publishing them to Pinterest automatically using Selenium.
 
-This project consists of two Python automation scripts:
-
-* **amazon.py** – Scrapes products from Amazon and stores them in an Excel queue.
-* **pins.py** – Reads products from the queue, creates Pinterest Pins automatically, removes posted products from the queue, and archives them in a separate file.
+The project now includes several improvements such as configurable scraping limits, duplicate prevention, automatic display timeout management during long-running sessions, and a robust queue-based workflow.
 
 ---
 
 # 🚀 Features
 
-## Amazon Product Scraper (`amazon.py`)
+## 🛒 Amazon Product Scraper (`amazon.py`)
 
-✅ Search Amazon using product keywords
+### Product Collection
 
-✅ Scrape product information
+* ✅ Search Amazon using custom keywords
+* ✅ Scrape multiple pages automatically
+* ✅ Scrape a user-defined number of products
+* ✅ Skip duplicate products already present in the Excel queue
+* ✅ Continue scraping until the requested number of products is collected
 
+### Product Information
+
+Each product includes:
+
+* Product Category
 * Product Name
 * Product Image URL
-* Product Link(Affliate Link)
+* Amazon Affiliate Link
 * Product Description
-* Category
 
-✅ Store products in Excel
+### Excel Queue
 
-✅ Bulk product collection
+Automatically stores products in:
 
-✅ Queue-based workflow
+```
+data/amazon_products.xlsx
+```
 
----
+The queue prevents duplicates and allows products to be posted later.
 
-## Pinterest Automation (`pins.py`)
+### Automatic Display Timeout Management
 
-✅ Read products from `amazon_products.xlsx`
+Long scraping sessions no longer stop because the monitor turns off.
 
-✅ Download product images automatically
+The scraper automatically:
 
-✅ Upload images to Pinterest
+* Reads the current Windows display timeout
+* Saves the original AC/Battery timeout values
+* Temporarily increases the display timeout while scraping
+* Restores the user's original settings when the script finishes
 
-✅ Fill Pin Title
-
-✅ Fill Pin Description
-
-✅ Add Destination Link
-
-✅ Publish Pins automatically
-
-✅ Remove successfully posted products from queue
-
-✅ Archive posted products in `posted_pins.xlsx`
-
-✅ Prevent duplicate posting
-
-✅ Resume processing from remaining products
+Administrator privileges are requested automatically when required.
 
 ---
 
-# 🔄 Workflow
+## 📌 Pinterest Automation (`pins.py`)
+
+The Pinterest automation reads products directly from the Excel queue.
+
+Features include:
+
+* ✅ Read queued products automatically
+* ✅ Download product images
+* ✅ Upload images to Pinterest
+* ✅ Fill Pin Title
+* ✅ Fill Pin Description
+* ✅ Add Affiliate Link
+* ✅ Publish Pins automatically
+* ✅ Archive successful posts
+* ✅ Remove posted products from the queue
+* ✅ Resume automatically from remaining products
+* ✅ Prevent duplicate posting
+
+---
+
+# 🔄 Complete Workflow
 
 ```text
-Product Keywords
-        │
-        ▼
-     amazon.py
-        │
-        ▼
- amazon_products.xlsx
+Search Keyword
+      │
+      ▼
+ amazon.py
+      │
+      ▼
+Scrape Amazon Products
+      │
+      ▼
+Duplicate Check
+      │
+      ▼
+amazon_products.xlsx
    (Pending Queue)
-        │
-        ▼
+      │
+      ▼
       pins.py
-        │
-        ▼
- Download Product Image
-        │
-        ▼
- Create Pinterest Pin
-        │
-        ▼
- Publish Pin
-        │
-        ├────────────► posted_pins.xlsx
-        │                (Posted Archive)
-        │
-        ▼
- Remove Product From
- amazon_products.xlsx
+      │
+      ▼
+Read Next Product
+      │
+      ▼
+Download Product Image
+      │
+      ▼
+Create Pinterest Pin
+      │
+      ▼
+Publish Pin
+      │
+      ├────────────► posted_pins.xlsx
+      │              (Archive)
+      │
+      ▼
+Remove Product From Queue
 ```
 
 ---
@@ -113,24 +137,23 @@ Amazon-Pinterest-Automation/
 
 # 📊 Excel Files
 
-## amazon_products.xlsx
+## `amazon_products.xlsx`
 
-Stores products waiting to be posted.
+Stores products waiting to be published.
 
-| Category    | Name        | Picture   | Affiliate Link | Description         |
-| ----------- | ----------- | --------- | -------------- | ------------------- |
-| Electronics | Smart Watch | Image URL | Product URL    | Product Description |
+| Category | Name | Picture | Affiliate Link | Description |
+| -------- | ---- | ------- | -------------- | ----------- |
 
 ---
 
-## posted_pins.xlsx
+## `posted_pins.xlsx`
 
-Stores products that have already been posted successfully.
+Stores products that have already been published.
 
 | Category | Name | Picture | Affiliate Link | Description | Posted Date |
 | -------- | ---- | ------- | -------------- | ----------- | ----------- |
 
-This file acts as an archive and helps prevent duplicate postings.
+This archive prevents duplicate Pinterest posts.
 
 ---
 
@@ -139,7 +162,9 @@ This file acts as an archive and helps prevent duplicate postings.
 * Python 3.10+
 * Google Chrome
 * Pinterest Account
+* Amazon Associates Account
 * Internet Connection
+* Windows (Administrator privileges required for automatic display timeout management)
 
 ---
 
@@ -159,7 +184,7 @@ Create a virtual environment:
 python -m venv venv
 ```
 
-Activate it:
+Activate it.
 
 ### Windows
 
@@ -181,9 +206,7 @@ pip install -r requirements.txt
 
 ---
 
-# 🔍 Running Amazon Scraper
-
-Edit product keywords inside `amazon.py`.
+# 🛒 Running Amazon Scraper
 
 Run:
 
@@ -191,21 +214,46 @@ Run:
 python amazon.py
 ```
 
+The script will ask for:
+
+```
+Enter Search Query:
+```
+
+Example:
+
+```
+wireless earbuds
+```
+
+Then:
+
+```
+Enter No of Items to Scrape:
+```
+
+Example:
+
+```
+100
+```
+
 The scraper will:
 
-1. Search Amazon
-2. Collect product details
-3. Save products into:
-
-```text
-data/amazon_products.xlsx
-```
+1. Request Administrator permission (if needed)
+2. Save current display timeout
+3. Prevent the display from turning off
+4. Search Amazon
+5. Collect products
+6. Skip duplicates
+7. Save products into the queue
+8. Restore the original display timeout automatically
 
 ---
 
 # 📌 Running Pinterest Automation
 
-Ensure your Chrome profile is already logged into Pinterest.
+Make sure your Chrome profile is already logged into Pinterest.
 
 Configure your profile path:
 
@@ -219,15 +267,18 @@ Run:
 python pins.py
 ```
 
-The bot will:
+The automation will:
 
-1. Read products from `amazon_products.xlsx`
-2. Download product images
-3. Create Pinterest Pins
-4. Add title, description, and link
-5. Publish the pin
-6. Save product details to `posted_pins.xlsx`
-7. Remove the product from `amazon_products.xlsx`
+1. Read the next queued product
+2. Download its image
+3. Create a Pinterest Pin
+4. Upload the image
+5. Add title
+6. Add description
+7. Add affiliate link
+8. Publish the pin
+9. Archive the product
+10. Remove it from the pending queue
 
 ---
 
@@ -235,28 +286,30 @@ The bot will:
 
 ### Before Posting
 
-| Product   |
-| --------- |
-| Product A |
-| Product B |
-| Product C |
+```text
+amazon_products.xlsx
 
-### After Product A is Posted
+Product A
+Product B
+Product C
+```
 
-#### amazon_products.xlsx
+After Product A is posted:
 
-| Product   |
-| --------- |
-| Product B |
-| Product C |
+```text
+amazon_products.xlsx
 
-#### posted_pins.xlsx
+Product B
+Product C
+```
 
-| Product   |
-| --------- |
-| Product A |
+```text
+posted_pins.xlsx
 
-This ensures that products are never posted twice.
+Product A
+```
+
+This guarantees every product is posted only once.
 
 ---
 
@@ -264,32 +317,53 @@ This ensures that products are never posted twice.
 
 * Python
 * Selenium
-* OpenPyXL
 * Pandas
+* OpenPyXL
+* Pyperclip
 * Requests
 * ChromeDriver Manager
+* Windows PowerCfg
+* Regular Expressions (Regex)
 
 ---
 
-# ⚠️ Important Notes
+# 🔒 Safety Features
 
-* Pinterest UI changes may require selector updates.
-* Amazon page structure changes may require scraper updates.
-* Use reasonable posting frequency.
-* Ensure compliance with Amazon Affiliate and Pinterest policies.
-* Keep Chrome and ChromeDriver updated.
+* Duplicate product detection
+* Duplicate Pinterest prevention
+* Automatic queue management
+* Automatic display timeout restoration
+* Administrator privilege detection
+* Exception handling during scraping
+* Resume from remaining products
 
 ---
 
-# 🔮 Future Enhancements
+# ⚠️ Notes
+
+* Pinterest UI updates may require Selenium selector changes.
+* Amazon page updates may require scraper adjustments.
+* Respect Amazon Associates Program policies.
+* Respect Pinterest automation policies.
+* Keep Chrome and ChromeDriver up to date.
+* Avoid excessive request rates to reduce the likelihood of rate limiting.
+
+---
+
+# 🔮 Planned Features
 
 * Pinterest Board Selection
-* Scheduled Posting
-* AI Generated Descriptions
+* AI-generated Pin Titles
+* AI-generated Descriptions
+* Product Price Filtering
+* Rating-based Product Filtering
+* Scheduled Pinterest Posting
 * Multiple Pinterest Accounts
+* Multiple Amazon Marketplaces
 * Cloud Deployment
+* GUI Version
 * Analytics Dashboard
-* Automated Product Filtering
+* Proxy Support
 
 ---
 
@@ -309,6 +383,8 @@ MIT License
 
 # ⭐ Support
 
-If this project helped you, please give it a ⭐ on GitHub.
+If you find this project useful, consider giving it a ⭐ on GitHub.
+
+Your support helps improve the project and encourages future development.
 
 Happy Automating! 🚀

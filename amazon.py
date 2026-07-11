@@ -12,7 +12,77 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+import ctypes
+import sys
+import subprocess
+import re
+import time
 
+
+# ---------------- Administrator Check ---------------- #
+
+def is_admin():
+    """Return True if the script is running as Administrator."""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except Exception:
+        return False
+
+def run_command(cmd):
+    """Run a command and raise an exception if it fails."""
+    subprocess.run(cmd, shell=True, check=True)
+
+
+def get_current_timeouts():
+    """Returns (AC_timeout, DC_timeout) in seconds."""
+
+    output = subprocess.check_output(
+        "powercfg /query SCHEME_CURRENT SUB_VIDEO VIDEOIDLE",
+        shell=True,
+        text=True,
+    )
+
+    ac_match = re.search(
+        r"Current AC Power Setting Index:\s+0x([0-9A-Fa-f]+)",
+        output
+    )
+
+    dc_match = re.search(
+        r"Current DC Power Setting Index:\s+0x([0-9A-Fa-f]+)",
+        output
+    )
+
+    if not ac_match or not dc_match:
+        raise Exception("Could not read display timeout values.")
+
+    ac = int(ac_match.group(1), 16)
+    dc = int(dc_match.group(1), 16)
+
+    return ac, dc
+
+
+def print_timeouts(title):
+    ac, dc = get_current_timeouts()
+
+    print(f"\n{'=' * 50}")
+    print(title)
+    print(f"{'=' * 50}")
+    print(f"AC Timeout : {ac} seconds ({ac/60:.2f} minutes)")
+    print(f"DC Timeout : {dc} seconds ({dc/60:.2f} minutes)")
+
+
+def set_display_timeout(ac_seconds, dc_seconds):
+    """Set display timeout (seconds)."""
+
+    run_command(
+        f"powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE {ac_seconds}"
+    )
+
+    run_command(
+        f"powercfg /setdcvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE {dc_seconds}"
+    )
+
+    run_command("powercfg /setactive SCHEME_CURRENT")
 
 # ==========================================================
 # CONFIG
@@ -369,9 +439,9 @@ def scrape_product(driver):
 def process_current_page(
     driver,
     page_number,
-    existing_products
+    existing_products,
 ):
-
+    global i, c
     products = get_products(driver)
 
     print(
@@ -381,9 +451,12 @@ def process_current_page(
     print(
         f"Products Found: {len(products)}"
     )
-
+    
+    
+        
     for index in range(len(products)):
-
+        if i >= c:
+            return False
         try:
 
             products = get_products(driver)
@@ -453,6 +526,10 @@ def process_current_page(
                 print(
                     f"Saved: {data['name']}"
                 )
+                i += 1
+                print(f"Scraped {i}/{c}")
+
+                
 
             driver.close()
 
@@ -482,6 +559,7 @@ def process_current_page(
 
             except:
                 pass
+    return True
 
 
 # ==========================================================
@@ -524,19 +602,23 @@ def goto_next_page(driver):
 
 def scrape_all_pages(
     driver,
-    existing_products
+    existing_products,
+    
 ):
 
     page_number = 1
 
     while True:
 
-        process_current_page(
+        continue_scraping = process_current_page(
             driver,
             page_number,
-            existing_products
+            existing_products,
         )
 
+        if not continue_scraping:
+            print(f"\nReached requested limit ({c} products).")
+            break
         moved = goto_next_page(driver)
 
         if not moved:
@@ -559,11 +641,39 @@ def scrape_all_pages(
 # ==========================================================
 
 def main():
+    if not is_admin():
+        ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            sys.executable,
+            '"' + sys.argv[0] + '"',
+            None,
+            1
+        )
+        sys.exit()
+    print("Reading current timeout values...")
 
+    # Save original values
+
+    original_ac, original_dc = get_current_timeouts()
+
+    print_timeouts("Original Display Timeout")
+
+    # Maximum timeout supported by Windows
+    MAX_TIMEOUT = 0xFFFFFFFF
+
+    print("\nSetting timeout to maximum...")
+
+    set_display_timeout(MAX_TIMEOUT, MAX_TIMEOUT)
+
+    print_timeouts("After Setting Maximum Timeout")
     query = input(
         "Enter Search Query: "
     )
-
+    global c
+    c = int(input("Enter No of Items to Scrape: "))
+    global i
+    i = 0
     create_excel_if_not_exists()
 
     existing_products = (
@@ -573,6 +683,7 @@ def main():
     print(
         f"Loaded {len(existing_products)} Existing Products"
     )
+    
 
     driver = launch_browser()
 
@@ -585,7 +696,8 @@ def main():
 
         scrape_all_pages(
             driver,
-            existing_products
+            existing_products,
+            
         )
 
         print(
@@ -599,7 +711,14 @@ def main():
     finally:
 
         driver.quit()
+    print("Restoring original timeout values...")
 
+    set_display_timeout(original_ac, original_dc)
+
+    print_timeouts("Restored Original Timeout")
+
+    print("\nDone!")
 
 if __name__ == "__main__":
+    
     main()
