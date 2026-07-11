@@ -1,3 +1,4 @@
+#"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="D:\AutomationProfile"
 import os
 import pandas as pd
 import requests
@@ -8,8 +9,77 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 import re
+import ctypes
+import sys
+import subprocess
+import re
+import time
 
 
+# ---------------- Administrator Check ---------------- #
+
+def is_admin():
+    """Return True if the script is running as Administrator."""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except Exception:
+        return False
+
+def run_command(cmd):
+    """Run a command and raise an exception if it fails."""
+    subprocess.run(cmd, shell=True, check=True)
+
+
+def get_current_timeouts():
+    """Returns (AC_timeout, DC_timeout) in seconds."""
+
+    output = subprocess.check_output(
+        "powercfg /query SCHEME_CURRENT SUB_VIDEO VIDEOIDLE",
+        shell=True,
+        text=True,
+    )
+
+    ac_match = re.search(
+        r"Current AC Power Setting Index:\s+0x([0-9A-Fa-f]+)",
+        output
+    )
+
+    dc_match = re.search(
+        r"Current DC Power Setting Index:\s+0x([0-9A-Fa-f]+)",
+        output
+    )
+
+    if not ac_match or not dc_match:
+        raise Exception("Could not read display timeout values.")
+
+    ac = int(ac_match.group(1), 16)
+    dc = int(dc_match.group(1), 16)
+
+    return ac, dc
+
+
+def print_timeouts(title):
+    ac, dc = get_current_timeouts()
+
+    print(f"\n{'=' * 50}")
+    print(title)
+    print(f"{'=' * 50}")
+    print(f"AC Timeout : {ac} seconds ({ac/60:.2f} minutes)")
+    print(f"DC Timeout : {dc} seconds ({dc/60:.2f} minutes)")
+
+
+def set_display_timeout(ac_seconds, dc_seconds):
+    """Set display timeout (seconds)."""
+
+    run_command(
+        f"powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE {ac_seconds}"
+    )
+
+    run_command(
+        f"powercfg /setdcvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE {dc_seconds}"
+    )
+
+    run_command("powercfg /setactive SCHEME_CURRENT")
 PINTEREST_URL = "https://in.pinterest.com/pin-creation-tool/"
 
 # =========================
@@ -178,11 +248,9 @@ def publish_pin(driver):
             )
         )
 
-        print("Button enabled:", publish_btn.is_enabled())
-        print("Button displayed:", publish_btn.is_displayed())
-        print("Button text:", publish_btn.text)
+        
 
-        driver.save_screenshot("before_publish.png")
+        
 
         driver.execute_script(
             "arguments[0].scrollIntoView({block:'center'});",
@@ -435,7 +503,31 @@ def mark_as_posted(product):
 # =========================
 
 if __name__ == "__main__":
+    if not is_admin():
+        ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            sys.executable,
+            '"' + sys.argv[0] + '"',
+            None,
+            1
+        )
+        sys.exit()
+    print("Reading current timeout values...")
 
+    # Save original values
+    original_ac, original_dc = get_current_timeouts()
+
+    print_timeouts("Original Display Timeout")
+
+    # Maximum timeout supported by Windows
+    MAX_TIMEOUT = 0xFFFFFFFF
+
+    print("\nSetting timeout to maximum...")
+
+    set_display_timeout(MAX_TIMEOUT, MAX_TIMEOUT)
+
+    print_timeouts("After Setting Maximum Timeout")
     number_of_pins = int(
         input("How many pins to prepare? ")
     )
@@ -508,10 +600,17 @@ if __name__ == "__main__":
             if i==number_of_pins:
                 break
             time.sleep(60)
+            print("=========================================")
     except Exception as e:
 
         print("An error occurred during posting:")
         print(e)
     finally:
         driver.quit()
-    
+    print("Restoring original timeout values...")
+
+    set_display_timeout(original_ac, original_dc)
+
+    print_timeouts("Restored Original Timeout")
+
+    print("\nDone!")
