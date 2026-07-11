@@ -4,3 +4,6 @@ selenium
 openpyxl
 pyperclip
 webdriver-manager
+ctypes
+sys
+subprocess
