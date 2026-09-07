@@ -145,7 +145,7 @@ def launch_browser():
     playwright = sync_playwright().start()
 
     browser = playwright.chromium.launch(
-        headless=False,
+        headless=HEADLESS,
     )
 
     context = browser.new_context(
