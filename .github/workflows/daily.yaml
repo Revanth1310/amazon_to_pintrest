@@ -8,14 +8,14 @@ on:
     # Pinterest poster: even calendar days
     - cron: '30 4 2-30/2 * *'
   workflow_dispatch:
-  inputs:
-    job:
-      description: "Select automation"
-      required: true
-      type: choice
-      options:
-        - amazon
-        - pinterest
+    inputs:
+      job:
+        description: "Select automation"
+        required: true
+        type: choice
+        options:
+          - amazon
+          - pinterest
 
 jobs:
   amazon-links:
