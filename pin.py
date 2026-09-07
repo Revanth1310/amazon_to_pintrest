@@ -258,7 +258,7 @@ def start_browser():
         raise FileNotFoundError(f"Authentication file not found: {AUTH_FILE}")
 
     playwright = sync_playwright().start()
-    browser = playwright.chromium.launch(headless=False)
+    browser = playwright.chromium.launch(headless=HEADLESS)
 
     context = browser.new_context(
         storage_state=AUTH_FILE,
