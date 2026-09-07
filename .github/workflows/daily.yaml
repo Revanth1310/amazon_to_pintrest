@@ -20,7 +20,11 @@ on:
 jobs:
   amazon-links:
     name: Get Amazon Links
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 4 1-31/2 * *'
+    if: |
+      (github.event_name == 'schedule' &&
+       github.event.schedule == '30 4 1-31/2 * *') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.job == 'amazon')
     runs-on: ubuntu-latest
 
     steps:
@@ -62,7 +66,11 @@ jobs:
       
   pinterest-post:
     name: Post Pins
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 4 2-30/2 * *'
+    if: |
+      (github.event_name == 'schedule' &&
+       github.event.schedule == '30 4 2-30/2 * *') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.job == 'pinterest')
     runs-on: ubuntu-latest
 
     steps:
