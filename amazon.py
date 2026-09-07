@@ -1,102 +1,35 @@
 import os
+import random
 import time
-import pyperclip
+import json
 import pandas as pd
 
 from openpyxl import Workbook
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-import ctypes
-import sys
-import subprocess
-import re
-import time
-
-
-# ---------------- Administrator Check ---------------- #
-
-def is_admin():
-    """Return True if the script is running as Administrator."""
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except Exception:
-        return False
-
-def run_command(cmd):
-    """Run a command and raise an exception if it fails."""
-    subprocess.run(cmd, shell=True, check=True)
-
-
-def get_current_timeouts():
-    """Returns (AC_timeout, DC_timeout) in seconds."""
-
-    output = subprocess.check_output(
-        "powercfg /query SCHEME_CURRENT SUB_VIDEO VIDEOIDLE",
-        shell=True,
-        text=True,
-    )
-
-    ac_match = re.search(
-        r"Current AC Power Setting Index:\s+0x([0-9A-Fa-f]+)",
-        output
-    )
-
-    dc_match = re.search(
-        r"Current DC Power Setting Index:\s+0x([0-9A-Fa-f]+)",
-        output
-    )
-
-    if not ac_match or not dc_match:
-        raise Exception("Could not read display timeout values.")
-
-    ac = int(ac_match.group(1), 16)
-    dc = int(dc_match.group(1), 16)
-
-    return ac, dc
-
-
-def print_timeouts(title):
-    ac, dc = get_current_timeouts()
-
-    print(f"\n{'=' * 50}")
-    print(title)
-    print(f"{'=' * 50}")
-    print(f"AC Timeout : {ac} seconds ({ac/60:.2f} minutes)")
-    print(f"DC Timeout : {dc} seconds ({dc/60:.2f} minutes)")
-
-
-def set_display_timeout(ac_seconds, dc_seconds):
-    """Set display timeout (seconds)."""
-
-    run_command(
-        f"powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE {ac_seconds}"
-    )
-
-    run_command(
-        f"powercfg /setdcvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE {dc_seconds}"
-    )
-
-    run_command("powercfg /setactive SCHEME_CURRENT")
-
+from urllib.parse import urljoin
 # ==========================================================
 # CONFIG
 # ==========================================================
-
-PROFILE_PATH = r"D:\AutomationProfile"
 
 FOLDER_PATH = "data"
 FILE_NAME = "amazon_products.xlsx"
 FILE_PATH = os.path.join(FOLDER_PATH, FILE_NAME)
 
+AUTH_FILE = "auth.json"
+
 SEARCH_WAIT = 2
 PRODUCT_WAIT = 3
 AFFILIATE_WAIT = 3
+
+# Number of NEW products to collect in one run
+PRODUCT_LIMIT = 20
+
+AMAZON_URL = "https://www.amazon.in"
+
+# Set HEADLESS = False for local testing.
+# GitHub Actions should normally use True unless you configure Xvfb.
+HEADLESS = True
 
 
 # ==========================================================
@@ -104,11 +37,9 @@ AFFILIATE_WAIT = 3
 # ==========================================================
 
 def create_excel_if_not_exists():
-
     os.makedirs(FOLDER_PATH, exist_ok=True)
 
     if not os.path.exists(FILE_PATH):
-
         wb = Workbook()
         ws = wb.active
         ws.title = "Products"
@@ -122,28 +53,27 @@ def create_excel_if_not_exists():
         ])
 
         wb.save(FILE_PATH)
-
         print(f"Created Excel: {FILE_PATH}")
-
     else:
         print(f"Excel Exists: {FILE_PATH}")
 
 
 def load_existing_products():
-
     try:
-
         df = pd.read_excel(FILE_PATH)
+
+        if "Name" not in df.columns:
+            return set()
 
         return set(
             df["Name"]
+            .dropna()
             .astype(str)
             .str.strip()
             .str.lower()
         )
 
-    except:
-
+    except Exception:
         return set()
 
 
@@ -154,11 +84,9 @@ def save_product(
     affiliate_link,
     description
 ):
-
     try:
         df = pd.read_excel(FILE_PATH)
-
-    except:
+    except Exception:
         df = pd.DataFrame(
             columns=[
                 "Category",
@@ -168,6 +96,20 @@ def save_product(
                 "Description"
             ]
         )
+
+    # Extra duplicate protection
+    if "Name" in df.columns:
+        existing_names = set(
+            df["Name"]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+
+        if str(name).strip().lower() in existing_names:
+            print("Already exists in Excel -> Skip save")
+            return False
 
     df.loc[len(df)] = [
         category,
@@ -180,56 +122,75 @@ def save_product(
     df.to_excel(FILE_PATH, index=False)
 
     print("Saved To Excel")
+    return True
 
 
 # ==========================================================
-# DRIVER
+# BROWSER
 # ==========================================================
 
 def launch_browser():
+    """
+    Launch Chromium with Playwright authentication state.
 
-    options = webdriver.ChromeOptions()
+    auth.json must be a Playwright storage-state file created with:
+        context.storage_state(path="auth.json")
+    """
 
-    options.add_argument(
-        f"--user-data-dir={PROFILE_PATH}"
+    if not os.path.exists(AUTH_FILE):
+        raise FileNotFoundError(
+            f"Authentication file not found: {AUTH_FILE}"
+        )
+
+    playwright = sync_playwright().start()
+
+    browser = playwright.chromium.launch(
+        headless=False,
     )
 
-    driver = webdriver.Chrome(
-        service=Service(
-            ChromeDriverManager().install()
-        ),
-        options=options
+    context = browser.new_context(
+        storage_state=AUTH_FILE,
+        viewport={"width": 1920, "height": 1080}
     )
 
-    driver.maximize_window()
+    page = context.new_page()
 
-    return driver
+    print("Playwright browser started")
+    print(f"Authentication state loaded: {AUTH_FILE}")
+
+    return playwright, browser, context, page
 
 
 # ==========================================================
 # AMAZON SEARCH
 # ==========================================================
 
-def search_amazon(driver, query):
+def search_amazon(page, query):
+    print(f"\nSearching Amazon for: {query}")
 
-    driver.get("https://www.amazon.in")
-
-    search_box = WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located(
-            (By.ID, "twotabsearchtextbox")
-        )
+    page.goto(
+        AMAZON_URL,
+        wait_until="domcontentloaded",
+        timeout=60000
     )
 
-    search_box.clear()
-    search_box.send_keys(query)
-    search_box.send_keys(Keys.ENTER)
+    search_box = page.locator("#twotabsearchtextbox")
 
-    WebDriverWait(driver, 20).until(
-        lambda d: "/s?" in d.current_url
+    search_box.wait_for(
+        state="visible",
+        timeout=30000
+    )
+
+    search_box.fill(query)
+    search_box.press("Enter")
+
+    page.wait_for_url(
+        "**/s?**",
+        timeout=30000
     )
 
     print("\nSearch URL:")
-    print(driver.current_url)
+    print(page.url)
 
     time.sleep(SEARCH_WAIT)
 
@@ -238,23 +199,26 @@ def search_amazon(driver, query):
 # PRODUCT LIST
 # ==========================================================
 
-def get_products(driver):
-
-    all_products = driver.find_elements(
-        By.CSS_SELECTOR,
+def get_products(page):
+    products = page.locator(
         'div.s-result-item[data-component-type="s-search-result"]'
     )
 
     valid_products = []
 
-    for product in all_products:
+    count = products.count()
 
-        asin = product.get_attribute(
-            "data-asin"
-        )
+    for index in range(count):
+        product = products.nth(index)
 
-        if asin:
-            valid_products.append(product)
+        try:
+            asin = product.get_attribute("data-asin")
+
+            if asin:
+                valid_products.append(product)
+
+        except Exception:
+            continue
 
     return valid_products
 
@@ -263,165 +227,201 @@ def get_products(driver):
 # PRODUCT DETAILS
 # ==========================================================
 
-def get_product_name(driver):
-
+def get_product_name(page):
     try:
+        title = page.locator("#productTitle").first
 
-        return WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located(
-                (By.ID, "productTitle")
-            )
-        ).text.strip()
-
-    except:
-        return ""
-
-
-def get_product_image(driver):
-
-    try:
-
-        img = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located(
-                (By.ID, "landingImage")
-            )
+        title.wait_for(
+            state="visible",
+            timeout=15000
         )
 
-        return img.get_attribute("src")
+        return title.inner_text().strip()
 
-    except:
+    except Exception:
         return ""
 
 
-def get_product_description(driver):
-
+def get_product_image(page):
     try:
+        img = page.locator("#landingImage").first
 
-        bullets = driver.find_elements(
-            By.CSS_SELECTOR,
+        img.wait_for(
+            state="visible",
+            timeout=15000
+        )
+
+        src = img.get_attribute("src")
+
+        if src:
+            return src
+
+        # Fallback for lazy-loaded images
+        src = img.get_attribute("data-old-hires")
+
+        return src or ""
+
+    except Exception:
+        return ""
+
+
+def get_product_description(page):
+    try:
+        bullets = page.locator(
             "#feature-bullets li span.a-list-item"
         )
 
         desc = []
 
-        for bullet in bullets:
+        for index in range(bullets.count()):
+            try:
+                text = bullets.nth(index).inner_text().strip()
 
-            text = bullet.text.strip()
+                if text:
+                    desc.append(text)
 
-            if text:
-                desc.append(text)
+            except Exception:
+                continue
 
         return " | ".join(desc)
 
-    except:
+    except Exception:
         return ""
 
 
-def get_product_category(driver):
-
+def get_product_category(page):
     try:
+        category = page.locator(
+            "#amzn-ss-category-content"
+        ).first
 
-        return driver.find_element(
-            By.ID,
-            "amzn-ss-category-content"
-        ).text.strip()
+        if category.count() > 0:
+            return category.inner_text().strip()
 
-    except:
+    except Exception:
+        pass
 
-        return ""
+    return ""
 
 
 # ==========================================================
 # AFFILIATE LINK
 # ==========================================================
 
-def get_affiliate_link(driver):
+def get_affiliate_link(page):
+    """
+    Uses the existing Amazon Associates SiteStripe selectors
+    from the Selenium version.
+
+    If the affiliate controls are not available, the current
+    product URL is returned as a fallback.
+    """
+
+    current_url = page.url
 
     try:
-
         time.sleep(2)
 
-        # CLICK GET LINK
-        get_link_btn = WebDriverWait(driver, 15).until(
-            EC.element_to_be_clickable(
-                (
-                    By.ID,
-                    "amzn-ss-get-link-button"
-                )
-            )
+        get_link_btn = page.locator(
+            "#amzn-ss-get-link-button"
+        ).first
+
+        get_link_btn.wait_for(
+            state="visible",
+            timeout=15000
         )
 
-        driver.execute_script(
-            "arguments[0].click();",
-            get_link_btn
-        )
+        get_link_btn.click()
 
         print("Clicked Get Link")
 
         time.sleep(AFFILIATE_WAIT)
 
-        # CLICK COPY AFFILIATE LINK
-        copy_btn = WebDriverWait(driver, 15).until(
-            EC.element_to_be_clickable(
-                (
-                    By.ID,
-                    "amzn-ss-copy-affiliate-link-btn-announce"
-                )
-            )
+        copy_btn = page.locator(
+            "#amzn-ss-copy-affiliate-link-btn-announce"
+        ).first
+
+        copy_btn.wait_for(
+            state="visible",
+            timeout=15000
         )
 
-        driver.execute_script(
-            "arguments[0].click();",
-            copy_btn
-        )
+        # Click copy button if available.
+        # We don't depend on the system clipboard because
+        # clipboard access is unreliable in GitHub Actions.
+        copy_btn.click()
 
         print("Clicked Copy Affiliate Link")
 
         time.sleep(2)
 
-        affiliate_link = pyperclip.paste()
+        # Try common input/text fields created by SiteStripe.
+        selectors = [
+            "#amzn-ss-text-shortlink",
+            "#amzn-ss-text-affiliate-link",
+            "input[id*='affiliate-link']",
+            "input[id*='shortlink']",
+            "textarea"
+        ]
 
-        print("Affiliate Link Copied")
+        for selector in selectors:
+            try:
+                loc = page.locator(selector).first
 
+                if loc.count() > 0:
+                    value = loc.input_value(timeout=3000)
+
+                    if value and value.startswith("http"):
+                        print("Affiliate Link Retrieved")
+                        return value.strip()
+
+            except Exception:
+                continue
+
+        # Try reading text from the SiteStripe area.
         try:
-
-            close_btn = driver.find_element(
-                By.CSS_SELECTOR,
-                "button.a-button-close"
+            site_stripe = page.locator(
+                "[id*='amzn-ss']"
             )
 
-            close_btn.click()
+            text = site_stripe.inner_text(timeout=3000)
 
-        except:
+            for line in text.splitlines():
+                line = line.strip()
+
+                if line.startswith("http"):
+                    print("Affiliate Link Retrieved From Text")
+                    return line
+
+        except Exception:
             pass
 
-        return affiliate_link
+        print("Could not read generated affiliate link.")
+        print("Using current product URL as fallback.")
+
+        return current_url
 
     except Exception as e:
+        print("Affiliate Link Error:", e)
+        print("Using current product URL as fallback.")
 
-        print(
-            "Affiliate Link Error:",
-            e
-        )
-
-        return driver.current_url
+        return current_url
 
 
 # ==========================================================
 # SCRAPE PRODUCT
 # ==========================================================
 
-def scrape_product(driver):
+def scrape_product(page):
+    category = get_product_category(page)
 
-    category = get_product_category(driver)
+    name = get_product_name(page)
 
-    name = get_product_name(driver)
+    image = get_product_image(page)
 
-    image = get_product_image(driver)
+    description = get_product_description(page)
 
-    description = get_product_description(driver)
-
-    affiliate_link = get_affiliate_link(driver)
+    affiliate_link = get_affiliate_link(page)
 
     return {
         "category": category,
@@ -437,12 +437,13 @@ def scrape_product(driver):
 # ==========================================================
 
 def process_current_page(
-    driver,
+    page,
     page_number,
-    existing_products,
+    existing_products
 ):
     global i, c
-    products = get_products(driver)
+
+    products = get_products(page)
 
     print(
         f"\n========== PAGE {page_number} =========="
@@ -451,45 +452,60 @@ def process_current_page(
     print(
         f"Products Found: {len(products)}"
     )
-    
-    
-        
+
     for index in range(len(products)):
+
         if i >= c:
             return False
-        try:
 
-            products = get_products(driver)
+        try:
+            # Re-read products because the page can change
+            # after returning from a product page.
+            products = get_products(page)
+
+            if index >= len(products):
+                break
 
             product = products[index]
 
-            link_element = product.find_element(
-                By.CSS_SELECTOR,
+            link_element = product.locator(
                 "a.a-link-normal.s-no-outline"
+            ).first
+
+            link_element.wait_for(
+                state="attached",
+                timeout=10000
             )
 
-            product_url = link_element.get_attribute(
-                "href"
-            )
+            product = products[index]
 
-            print(
-                f"\nOpening Product {index + 1}"
-            )
+            asin = product.get_attribute("data-asin")
 
-            print(product_url)
+            if not asin:
+                print("ASIN Empty -> Skip")
+                continue
 
-            driver.execute_script(
-                "window.open(arguments[0]);",
-                product_url
-            )
+            product_url = f"https://www.amazon.in/dp/{asin}"
 
-            driver.switch_to.window(
-                driver.window_handles[-1]
-            )
+            print(f"\nOpening Product {index + 1}")
+            print(f"ASIN: {asin}")
+            print(f"Product URL: {product_url}")
 
-            time.sleep(PRODUCT_WAIT)
+            product_page = page.context.new_page()
 
-            data = scrape_product(driver)
+            try:
+                product_page.goto(
+                    product_url,
+                    wait_until="domcontentloaded",
+                    timeout=60000
+                )
+
+                time.sleep(PRODUCT_WAIT)
+
+                data = scrape_product(product_page)
+
+            finally:
+                product_page.close()
 
             product_name = (
                 data["name"]
@@ -498,27 +514,24 @@ def process_current_page(
             )
 
             if not product_name:
+                print("Product Name Empty")
 
-                print(
-                    "Product Name Empty"
-                )
+                continue
 
-            elif product_name in existing_products:
+            if product_name in existing_products:
+                print("Already Exists -> Skip")
 
-                print(
-                    "Already Exists -> Skip"
-                )
+                continue
 
-            else:
+            saved = save_product(
+                data["category"],
+                data["name"],
+                data["image"],
+                data["affiliate_link"],
+                data["description"]
+            )
 
-                save_product(
-                    data["category"],
-                    data["name"],
-                    data["image"],
-                    data["affiliate_link"],
-                    data["description"]
-                )
-
+            if saved:
                 existing_products.add(
                     product_name
                 )
@@ -526,39 +539,20 @@ def process_current_page(
                 print(
                     f"Saved: {data['name']}"
                 )
+
                 i += 1
-                print(f"Scraped {i}/{c}")
 
-                
-
-            driver.close()
-
-            driver.switch_to.window(
-                driver.window_handles[0]
-            )
+                print(
+                    f"Scraped {i}/{c}"
+                )
 
             time.sleep(1)
 
         except Exception as e:
-
             print(
                 f"Error Product {index + 1}: {e}"
             )
 
-            try:
-
-                if len(
-                    driver.window_handles
-                ) > 1:
-
-                    driver.close()
-
-                    driver.switch_to.window(
-                        driver.window_handles[0]
-                    )
-
-            except:
-                pass
     return True
 
 
@@ -566,33 +560,40 @@ def process_current_page(
 # NEXT PAGE
 # ==========================================================
 
-def goto_next_page(driver):
-
+def goto_next_page(page):
     try:
-
-        next_btn = driver.find_element(
-            By.CSS_SELECTOR,
+        next_btn = page.locator(
             "a.s-pagination-next"
-        )
+        ).first
 
-        driver.execute_script(
-            "arguments[0].scrollIntoView({block:'center'});",
-            next_btn
-        )
+        if next_btn.count() == 0:
+            return False
 
-        time.sleep(2)
+        if not next_btn.is_visible():
+            return False
 
-        driver.execute_script(
-            "arguments[0].click();",
-            next_btn
+        disabled = next_btn.get_attribute("aria-disabled")
+
+        if disabled == "true":
+            return False
+
+        next_btn.scroll_into_view_if_needed()
+
+        time.sleep(1)
+
+        next_btn.click()
+
+        # Wait for the next page/search result content.
+        page.wait_for_load_state(
+            "domcontentloaded",
+            timeout=30000
         )
 
         time.sleep(3)
 
         return True
 
-    except:
-
+    except Exception:
         return False
 
 
@@ -601,32 +602,31 @@ def goto_next_page(driver):
 # ==========================================================
 
 def scrape_all_pages(
-    driver,
-    existing_products,
-    
+    page,
+    existing_products
 ):
-
     page_number = 1
 
     while True:
 
         continue_scraping = process_current_page(
-            driver,
+            page,
             page_number,
-            existing_products,
+            existing_products
         )
 
         if not continue_scraping:
-            print(f"\nReached requested limit ({c} products).")
+            print(
+                f"\nReached requested limit ({c} products)."
+            )
             break
-        moved = goto_next_page(driver)
+
+        moved = goto_next_page(page)
 
         if not moved:
-
             print(
                 "\nNo More Pages Found"
             )
-
             break
 
         page_number += 1
@@ -641,84 +641,87 @@ def scrape_all_pages(
 # ==========================================================
 
 def main():
-    if not is_admin():
-        ctypes.windll.shell32.ShellExecuteW(
-            None,
-            "runas",
-            sys.executable,
-            '"' + sys.argv[0] + '"',
-            None,
-            1
-        )
-        sys.exit()
-    print("Reading current timeout values...")
 
-    # Save original values
+    queries = [
+        "women's trendy dresses",
+        "women's casual tops",
+        "women's ethnic wear",
+        "women's handbags",
+        "men's casual shirts",
+        "men's t shirts",
+        "men's ethnic wear",
+        "kitchen storage organizers",
+        "kitchen gadgets and tools",
+        "non stick cookware set"
+    ]
 
-    original_ac, original_dc = get_current_timeouts()
+    query = random.choice(queries)
 
-    print_timeouts("Original Display Timeout")
+    print("=" * 60)
+    print("Amazon Product Automation - Playwright")
+    print("=" * 60)
 
-    # Maximum timeout supported by Windows
-    MAX_TIMEOUT = 0xFFFFFFFF
+    print(f"Random Query: {query}")
 
-    print("\nSetting timeout to maximum...")
-
-    set_display_timeout(MAX_TIMEOUT, MAX_TIMEOUT)
-
-    print_timeouts("After Setting Maximum Timeout")
-    query = input(
-        "Enter Search Query: "
-    )
     global c
-    c = int(input("Enter No of Items to Scrape: "))
+    c = PRODUCT_LIMIT
+
     global i
     i = 0
+
     create_excel_if_not_exists()
 
-    existing_products = (
-        load_existing_products()
-    )
+    existing_products = load_existing_products()
 
     print(
         f"Loaded {len(existing_products)} Existing Products"
     )
-    
 
-    driver = launch_browser()
+    playwright = None
+    browser = None
+    context = None
+    page = None
 
     try:
+        playwright, browser, context, page = launch_browser()
 
         search_amazon(
-            driver,
+            page,
             query
         )
 
         scrape_all_pages(
-            driver,
-            existing_products,
-            
+            page,
+            existing_products
         )
 
         print(
             "\nScraping Completed"
         )
 
-        input(
-            "\nPress Enter To Close..."
+        print(
+            f"New Products Saved: {i}"
         )
 
+    except Exception as e:
+        print(
+            f"\nAutomation Error: {e}"
+        )
+        raise
+
     finally:
+        if context:
+            context.close()
 
-        driver.quit()
-    print("Restoring original timeout values...")
+        if browser:
+            browser.close()
 
-    set_display_timeout(original_ac, original_dc)
+        if playwright:
+            playwright.stop()
 
-    print_timeouts("Restored Original Timeout")
+        print("\nBrowser closed.")
+        print("Done!")
 
-    print("\nDone!")
 
 if __name__ == "__main__":
-    
     main()

@@ -7,3 +7,4 @@ webdriver-manager
 ctypes
 sys
 subprocess
+pillow

@@ -1,0 +1,104 @@
+name: Pinterest Automation
+
+on:
+  schedule:
+    # 10:00 AM IST = 04:30 UTC
+    # Amazon scraper: odd calendar days
+    - cron: '30 4 1-31/2 * *'
+    # Pinterest poster: even calendar days
+    - cron: '30 4 2-30/2 * *'
+  workflow_dispatch:
+  inputs:
+    job:
+      description: "Select automation"
+      required: true
+      type: choice
+      options:
+        - amazon
+        - pinterest
+
+jobs:
+  amazon-links:
+    name: Get Amazon Links
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 4 1-31/2 * *'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright pandas openpyxl requests pillow
+          playwright install --with-deps chromium
+      - name: Decrypt auth.json
+        env:
+          AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
+        run: |
+          printf '%s' "$AUTH_PASSWORD" | openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in auth.json.enc \
+            -out auth.json \
+            -pass stdin
+      - name: Run Amazon link scraper
+        run: |
+          python amazon.py
+      - name: Delete authentication file
+        if: always()
+        run: |
+          rm -f auth.json
+      - name: Commit updated Amazon data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/amazon_products.xlsx
+          git diff --cached --quiet || git commit -m "Update Amazon products"
+          git push
+      
+  pinterest-post:
+    name: Post Pins
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 4 2-30/2 * *'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright pandas openpyxl requests pillow
+          playwright install --with-deps chromium
+
+      - name: Decrypt auth_p.json
+        env:
+          AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
+        run: |
+          printf '%s' "$AUTH_PASSWORD" | openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in auth_p.json.enc \
+            -out auth_p.json \
+            -pass stdin
+      - name: Run Pinterest posting
+        run: |
+          python pin.py
+      - name: Delete authentication file
+        if: always()
+        run: |
+          rm -f auth_p.json
+      - name: Commit updated posting data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/posted_pins.xlsx data/amazon_products.xlsx images/
+          git diff --cached --quiet || git commit -m "Update Pinterest posting data"
+          git push

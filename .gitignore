@@ -1,3 +1,6 @@
 .vscode/
-data/
 images/
+auth.json
+auth_p.json
+venv/
+__pycache__/
