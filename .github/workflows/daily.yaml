@@ -3,10 +3,13 @@ name: Pinterest Automation
 on:
   schedule:
     # 10:00 AM IST = 04:30 UTC
+
     # Amazon scraper: odd calendar days
     - cron: '30 4 1-31/2 * *'
+
     # Pinterest poster: even calendar days
     - cron: '30 4 2-30/2 * *'
+
   workflow_dispatch:
     inputs:
       job:
@@ -18,18 +21,28 @@ on:
           - pinterest
 
 jobs:
+
+  # ============================================================
+  # AMAZON
+  # ============================================================
+
   amazon-links:
     name: Get Amazon Links
+
     if: |
       (github.event_name == 'schedule' &&
        github.event.schedule == '30 4 1-31/2 * *') ||
       (github.event_name == 'workflow_dispatch' &&
        inputs.job == 'amazon')
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -41,6 +54,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install playwright pandas openpyxl requests pillow
           playwright install --with-deps chromium
+
       - name: Decrypt auth.json
         env:
           AUTH_PASSWORD: ${{ secrets.AUTH_PASSWORD }}
@@ -49,33 +63,49 @@ jobs:
             -in auth.json.enc \
             -out auth.json \
             -pass stdin
+
       - name: Run Amazon link scraper
         run: |
           python amazon.py
+
       - name: Delete authentication file
         if: always()
         run: |
           rm -f auth.json
+
       - name: Commit updated Amazon data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add data/amazon_products.xlsx
+
           git diff --cached --quiet || git commit -m "Update Amazon products"
+
           git push
-      
+
+
+  # ============================================================
+  # PINTEREST
+  # ============================================================
+
   pinterest-post:
     name: Post Pins
+
     if: |
       (github.event_name == 'schedule' &&
        github.event.schedule == '30 4 2-30/2 * *') ||
       (github.event_name == 'workflow_dispatch' &&
        inputs.job == 'pinterest')
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -96,17 +126,23 @@ jobs:
             -in auth_p.json.enc \
             -out auth_p.json \
             -pass stdin
+
       - name: Run Pinterest posting
         run: |
           python pin.py
+
       - name: Delete authentication file
         if: always()
         run: |
           rm -f auth_p.json
+
       - name: Commit updated posting data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add data/posted_pins.xlsx data/amazon_products.xlsx
+
           git diff --cached --quiet || git commit -m "Update Pinterest posting data"
+
           git push
